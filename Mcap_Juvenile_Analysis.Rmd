@@ -1,0 +1,724 @@
+---
+title: "Optimizing rearing of juvenile M. capitata corals"
+author: "Josh Hancock, Crawford Drury (R script co author), Shayle Matsuda, Ariana S Huffmyer (R Markdown Author)"
+date: "2020"
+output:
+  html_document:
+    code_folding: hide
+    toc: yes
+    toc_depth: 6
+    toc_float: yes
+  pdf_document:
+    keep_tex: yes
+---
+
+```{r, echo=TRUE, show=FALSE}
+rm(list=ls(all=TRUE)) 
+```
+
+```{r setup, echo=TRUE}
+knitr::opts_chunk$set(root.dir = "~/R",warning=FALSE, message=FALSE)
+```
+
+# **1. Formatting Datasets**    
+
+Data sets are formatted to long form for growth, survivorship, and bleaching.  
+
+In these datasets, columns are as follows:  
+- "type": Aggregate or individual setter  
+- "conditioned": Either conditioned (yes) or non-conditioned (no) plugs  
+- "flow": Either presence of flow (yes) or low flow (no)  
+- "light" & "growth_shade": Shade cloth used as high light (2x) or low light (4x)  
+- "temperature": Larval conditioning temperature as ambient, cold, or high temperature  
+
+Formatting growth.   
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+
+library(readxl);library(tidyverse);library(janitor)
+
+growth_AH<-read_xlsx("Data/Growth_03062020.xlsx")%>%clean_names()%>%
+     mutate(type=case_when(str_detect(aggregate_individual, "[A-O]") ~"agg",
+                           TRUE ~ "ind"))%>%
+     rename(growth=growth_mm2)
+```
+
+Formatting survivorship.    
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+
+raw<-read_xlsx("Data/M.cap_Survivorship_03032020.xlsx")%>%clean_names()
+metadata<-raw[,1:5]
+
+initial<-raw%>%select(plug_number,temperature,conditioned,flow,growth_shade,noquote(order(colnames(raw))))%>%
+     select(-contains("part"))%>%
+     select(-contains("x"))%>%
+     gather(measurement,count,-plug_number,-temperature,-conditioned,-flow,-growth_shade)%>%
+     separate(measurement,into=c("measurement","date"),sep=-6)%>%
+     mutate(measurement=case_when(measurement=="agg_"~"agg_surv",
+                                  measurement=="ind_"~"ind_surv",
+                                  measurement=="agg_bleach_"~"agg_bleach",
+                                  measurement=="ind_bleach_"~"ind_bleach"))%>%
+     separate(measurement,into=c("type","measurement"),sep="_")%>%
+     filter(date=="071519"|date=="071719")%>%
+     select(-temperature,-conditioned,-flow,-growth_shade,-date)%>%
+     mutate(count=as.numeric(count))%>%
+     group_by(plug_number,type)%>%summarise(count=sum(count,na.rm=TRUE))%>%
+     rename(initial=count)
+
+counts<-raw%>%select(plug_number,temperature,conditioned,flow,growth_shade,noquote(order(colnames(raw))))%>%
+     select(-contains("part"))%>%
+     select(-contains("x"))%>%
+     gather(measurement,count,-plug_number,-temperature,-conditioned,-flow,-growth_shade)%>%
+     separate(measurement,into=c("measurement","date"),sep=-6)%>%
+     separate(measurement,into=c("type","measurement"))%>%mutate(measurement=case_when(measurement!="bleach" ~ "surv",
+                                                                                       TRUE ~ as.character(measurement)))%>%
+     mutate(timepoint=case_when(date=="071519"~1, #by day from initial
+                                date=="071719"~1,
+                                date=="071819"~1,
+                                date=="072219"~7,
+                                date=="072419"~7,
+                                date=="072919"~14,
+                                date=="073119"~14,
+                                date=="080519"~21,
+                                date=="080719"~21,
+                                date=="081219"~28,
+                                date=="081419"~28,
+                                date=="081919"~35,
+                                date=="082119"~35,
+                                date=="091719"~64,
+                                date=="091919"~64,
+                                date=="101519"~92,
+                                date=="101719"~92,
+                                date=="111219"~120,
+                                date=="111419"~120,
+                                date=="121019"~148,
+                                date=="121219"~148))%>%
+     select(-temperature,-conditioned,-flow,-growth_shade,-date)%>%
+     mutate(count=as.numeric(count))%>%
+     group_by(plug_number,timepoint,type)%>%summarise(count=sum(count,na.rm=TRUE))
+
+surv<-left_join(left_join(counts,initial,by=c("plug_number","type"))%>%
+     select(plug_number,timepoint,type,initial,count)%>%
+     mutate(dead=as.numeric(initial)-as.numeric(count))%>%
+     mutate(dead=case_when(dead<0 ~ 0,TRUE ~ as.numeric(dead)))%>%
+     select(-initial),metadata,by="plug_number")%>%
+     select(plug_number,temperature,conditioned,flow,growth_shade,timepoint,type,count,dead)%>%
+     rename(alive=count)
+
+unfold<-function(x,lost_colname,surv_colname){
+     lost_expanded<-x[rep(row.names(x), x[[lost_colname]]), 1:ncol(x)]
+     lost_final<-lost_expanded%>%mutate(outcome=0)
+     surv_expanded<-x[rep(row.names(x), x[[surv_colname]]), 1:ncol(x)]
+     surv_final<-surv_expanded %>% mutate(outcome=1)
+     rbind(lost_final,surv_final)
+}
+
+surv_AH<-unfold(surv,"dead","alive") #dead=0, alive=1
+```
+
+Formatting bleaching.    
+```{r, results=FALSE, warning=FALSE, message=FALSE}
+
+bl_counts<-raw%>%select(plug_number,temperature,conditioned,flow,growth_shade,noquote(order(colnames(raw))))%>%
+     select(-contains("part"))%>%
+     select(-contains("x"))%>%
+     gather(measurement,count,-plug_number,-temperature,-conditioned,-flow,-growth_shade)%>%
+     separate(measurement,into=c("measurement","date"),sep=-6)%>%
+     mutate(measurement=case_when(measurement=="agg_"~"agg_surv",
+                                  measurement=="ind_"~"ind_surv",
+                                  measurement=="agg_bleach_"~"agg_bleach",
+                                  measurement=="ind_bleach_"~"ind_bleach"))%>%
+     separate(measurement,into=c("type","measurement"),sep="_")%>%
+     mutate(timepoint=case_when(date=="071519"~1,
+                                date=="071719"~1,
+                                date=="071819"~1,
+                                date=="072219"~7,
+                                date=="072419"~7,
+                                date=="072919"~14,
+                                date=="073119"~14,
+                                date=="080519"~21,
+                                date=="080719"~21,
+                                date=="081219"~28,
+                                date=="081419"~28,
+                                date=="081919"~35,
+                                date=="082119"~35,
+                                date=="091719"~64,
+                                date=="091919"~64,
+                                date=="101519"~92,
+                                date=="101719"~92,
+                                date=="111219"~120,
+                                date=="111419"~120,
+                                date=="121019"~148,
+                                date=="121219"~148))%>%
+     select(-temperature,-conditioned,-flow,-growth_shade,-date)%>%
+     mutate(count=as.numeric(count))%>%
+     group_by(plug_number,timepoint,type,measurement)%>%summarise(count=sum(count,na.rm=TRUE))%>%
+     spread(measurement,count)%>%
+     mutate(total=bleach+surv)%>%
+     mutate(nonbleach=total-bleach)%>%
+     select(-total,-surv)
+
+
+bleach<-left_join(bl_counts,metadata,by="plug_number")%>%
+     select(plug_number,temperature,conditioned,flow,growth_shade,timepoint,type,bleach,nonbleach)
+
+bleach_AH<-unfold(bleach,"bleach","nonbleach") #bleach=0, nonbleach=1
+
+#### CLEANUP
+toremove <- grep("*_AH", ls(), invert = TRUE,value = TRUE)
+rm(list = c(toremove, "toremove"))
+```
+
+# **2. Growth**      
+
+## *Growth Rate*  
+
+Growth is calculated as total percent growth (change in growth over course of study normalized to initial size).  
+
+Analyze growth using a linear mixed effects model.   
+Fixed effects: type, flow, temperature, conditioned   
+Random effects: plug number  
+Subset by: 2x shade only (high light/low shade)  
+
+First, calculate growth rates and examine data for outliers.  
+```{r, results=TRUE, warning=FALSE, message=FALSE}
+library(lme4); library(effects); library(ggplot2); library(car); library(lmerTest)
+
+#calculate growth as percent change by dividing change in surface area ("growth") by the initial size ("initial_july")
+growth_AH$percent_growth<-growth_AH$growth/growth_AH$initial_july
+growth_AH$temperature<-as.factor(growth_AH$temperature)
+growth_AH$conditioned<-as.factor(growth_AH$conditioned)
+growth_AH$flow<-as.factor(growth_AH$flow)
+growth_AH$light<-as.factor(growth_AH$light)
+growth_AH$type<-as.factor(growth_AH$type)
+growth_AH$plug_number<-as.factor(growth_AH$plug_number)
+
+#relevel
+growth_AH$temperature <- factor(growth_AH$temperature, levels = c("Cold", "Ambient", "Hot"))
+growth_AH$conditioned <- factor(growth_AH$conditioned, levels = c("No", "Yes"))
+growth_AH$flow <- factor(growth_AH$flow, levels = c("No", "Yes"))
+growth_AH$type <- factor(growth_AH$type, levels = c("ind", "agg"))
+
+#check distribution
+hist(growth_AH$percent_growth)
+max(growth_AH$percent_growth)
+min(growth_AH$percent_growth)
+
+#values within biologically expected range
+```
+
+Run full model with percent growth and fixed and random effects and examine assumptions.     
+
+`growth_mod<-lmer(percent_growth~temperature * conditioned * flow * type + (1|plug_number), data=growth_AH)`
+
+```{r, results=TRUE, message=FALSE, warning=TRUE}
+#build model
+growth_mod<-lmerTest::lmer(scale(percent_growth)~temperature * conditioned * flow * type + (1|plug_number), data=growth_AH)
+
+#check assumptions
+qqPlot(residuals(growth_mod)) #violated, there is an upper tail in the data that requires a transformation
+```
+
+The assumption of residual normality is not met, so we will conduct a square root transformation of the response variable.  
+
+Check assumption of residual normality and homogeneity of variance.  
+```{r, results=TRUE, message=FALSE, warning=TRUE}
+#model with transformed data
+growth_AH$growth_transformed<-sqrt(1+growth_AH$percent_growth)
+
+growth_modT<-lmerTest::lmer(scale(growth_transformed)~temperature * conditioned * flow * type + (1|plug_number), data=growth_AH)
+#square root transformation, adding constant due to negative numbers
+
+#check assumptions
+qqPlot(residuals(growth_modT)) #no longer violated
+leveneTest(residuals(growth_modT)~temperature*conditioned*flow*type, data=growth_AH) #violated, use White correction in anova to account for this
+```
+
+Normality is met, but variance is violated. We will use a white correction in ANOVA summary of model to conduct conservative estimates.  
+
+Look at summary table and ANOVA table.  
+```{r, results=TRUE}
+#look at summary
+summary(growth_modT)
+car::Anova(growth_modT, type=2, white.adjust=TRUE) #white.adjust=TRUE with car::Anova method adds heteroscedasticity-corrected adjustment for violation in variance
+
+#output to excel file
+
+#coefficients
+x<-summary(growth_modT)$coefficients 
+library(broom)
+y<-broom::tidy(x)
+library(writexl)
+writexl::write_xlsx(as.data.frame(y), path = "Output/growth_model_coefs.xlsx")
+
+#anova
+x<-car::Anova(growth_modT, type=2, white.adjust=TRUE)
+y<-broom::tidy(x)
+writexl::write_xlsx(as.data.frame(y), path = "Output/growth_model_pvalues.xlsx")
+```
+
+Summarize growth with table of means and descriptive statistics.    
+
+```{r, results=TRUE}
+growth_summary <- plyr::ddply(growth_AH, c("temperature", "conditioned", "flow", "type"), summarise,
+                  N    = length(percent_growth[!is.na(percent_growth)]),
+                  mean = mean(percent_growth, na.rm=TRUE),
+                  sd   = sd(percent_growth, na.rm=TRUE),
+                  se   = sd / sqrt(N), 
+                  max = max(percent_growth, na.rm=TRUE),
+                  lower = mean-sd, 
+                  upper = mean+sd
+);growth_summary
+
+#export to excel file
+x<-growth_summary
+writexl::write_xlsx(x, path = "Output/growth_descriptive_stats.xlsx")
+```
+
+## *Final Size*  
+
+Final size is calculated as end surface area measurement for each juvenile.    
+
+Analyze size using a linear mixed effects model.   
+Fixed effects: type, flow, temperature, conditioned   
+Random effects: plug number  
+Subset by: 2x shade only (high light/low shade)  
+
+First, examine distribution of total size data.  
+```{r, results=TRUE, warning=FALSE, message=FALSE}
+#check distribution
+hist(growth_AH$final_december)
+max(growth_AH$final_december)
+min(growth_AH$final_december)
+
+#values within biologically expected range
+```
+
+Run full model with total size and fixed and random effects and examine assumptions.     
+
+`size_mod<-lmer(final_december~temperature * conditioned * flow * type + (1|plug_number), data=growth_AH)`
+
+```{r, results=TRUE, message=FALSE, warning=TRUE}
+#build model
+size_mod<-lmerTest::lmer(scale(final_december)~temperature * conditioned * flow * type + (1|plug_number), data=growth_AH)
+
+#check assumptions
+qqPlot(residuals(size_mod)) #violated, there is an upper tail in the data that requires a transformation
+```
+
+The assumption of residual normality is not met, so we will conduct a 1/10 transformation of the response variable.  
+
+Check assumption of residual normality and homogeneity of variance.  
+```{r, results=TRUE, message=FALSE, warning=TRUE}
+#model with transformed data
+growth_AH$size_transformed<-(growth_AH$final_december)^(1/10)
+
+size_modT<-lmerTest::lmer(scale(size_transformed)~temperature * conditioned * flow * type + (1|plug_number), data=growth_AH)
+#square root transformation
+
+#check assumptions
+qqPlot(residuals(size_modT)) #no longer violated
+leveneTest(residuals(size_modT)~temperature*conditioned*flow*type, data=growth_AH) #violated, use White correction in anova to account for this
+hist(residuals(size_modT))
+```
+
+Normality is met, but variance is violated. We will use a white correction in ANOVA summary of model to conduct conservative estimates.  
+
+Look at summary table and ANOVA table.  
+```{r, results=TRUE}
+#look at summary
+summary(size_modT)
+car::Anova(size_modT, type=2, white.adjust=TRUE) #white.adjust=TRUE with car::Anova method adds heteroscedasticity-corrected adjustment for violation in variance
+
+#output to excel file
+
+#coefficients
+x<-summary(size_modT)$coefficients 
+library(broom)
+y<-broom::tidy(x)
+library(writexl)
+writexl::write_xlsx(as.data.frame(y), path = "Output/size_model_coefs.xlsx")
+
+#anova
+x<-car::Anova(size_modT, type=2, white.adjust=TRUE)
+y<-broom::tidy(x)
+writexl::write_xlsx(as.data.frame(y), path = "Output/size_model_pvalues.xlsx")
+```
+
+Summarize growth with table of means and descriptive statistics.    
+
+```{r, results=TRUE}
+size_summary <- plyr::ddply(growth_AH, c("temperature", "conditioned", "flow", "type"), summarise,
+                  N    = length(final_december[!is.na(final_december)]),
+                  mean = mean(final_december, na.rm=TRUE),
+                  sd   = sd(final_december, na.rm=TRUE),
+                  se   = sd / sqrt(N), 
+                  max = max(final_december, na.rm=TRUE),
+                  lower = mean-sd, 
+                  upper = mean+sd
+);size_summary
+
+#export to excel file
+x<-size_summary
+writexl::write_xlsx(x, path = "Output/size_descriptive_stats.xlsx")
+```
+
+
+
+# **3. Survivorship**  
+
+Survivorship is measured as a binomial response (1 = alive, 0 = dead) at the final timepoint of the experiment.  
+
+Format survivorship data frame.  
+```{r, results=TRUE}
+#format data
+surv_AH$temperature<-as.factor(surv_AH$temperature)
+surv_AH$conditioned<-as.factor(surv_AH$conditioned)
+surv_AH$flow<-as.factor(surv_AH$flow)
+surv_AH$growth_shade<-as.factor(surv_AH$growth_shade)
+surv_AH$type<-as.factor(surv_AH$type)
+surv_AH$plug_number<-as.factor(surv_AH$plug_number)
+surv_AH$timepoint<-as.factor(surv_AH$timepoint)
+```
+
+### *Surivorship by shade*  
+
+Run survivorship model for shade only to characterize complete mortality in high shade treatment.  
+Analyze with a binomial mixed effect model.    
+Fixed effects: shade, timepoint
+Random effects: plug number  
+
+`surv_shade_mod<-glmer(outcome ~ growth_shade * timepoint + (1|plug_number), data=surv_AH, family=binomial)`  
+
+Run model and check for overdispersion.  
+```{r, results=TRUE, message=FALSE, warning=FALSE}
+library(blmeco)
+
+surv_shade_mod<-glmer(outcome ~ growth_shade * timepoint + (1|plug_number), data=surv_AH, family=binomial)
+
+dispersion_glmer(surv_shade_mod) #no evidence of overdispersion
+```
+
+View summary and ANOVA table.  
+
+```{r, results=TRUE}
+summary(surv_shade_mod)
+Anova(surv_shade_mod)
+
+#export to excel
+#coefficients
+x<-summary(surv_shade_mod)$coefficients 
+y<-broom::tidy(x)
+writexl::write_xlsx(as.data.frame(y), path = "Output/surv_shade_model_coefs.xlsx")
+
+#anova
+x<-car::Anova(surv_shade_mod, type=2)
+y<-broom::tidy(x)
+writexl::write_xlsx(as.data.frame(y), path = "Output/surv_shade_model_pvalues.xlsx")
+```
+
+Summarize and display statistics for survival over time by shade treatment.   
+```{r, results=TRUE}
+
+surv_shade_summary <- plyr::ddply(surv_AH, c("timepoint", "growth_shade"), summarise,
+                  N    = length(outcome[!is.na(outcome)]),
+                  mean = mean(outcome, na.rm=TRUE),
+                  sd   = sd(outcome, na.rm=TRUE),
+                  se   = sd / sqrt(N), 
+                  max = max(outcome, na.rm=TRUE),
+                  lower = mean-sd, 
+                  upper = mean+sd
+);surv_shade_summary
+
+#export to excel file
+x<-surv_shade_summary
+writexl::write_xlsx(x, path = "Output/surv_shade_descriptive_stats.xlsx")
+```
+
+Conduct post-hoc test for timepoint.  
+
+```{r, results=TRUE}
+library(emmeans); library(multcomp)
+emm = emmeans(surv_shade_mod, ~ growth_shade | timepoint) #can choose other adjustment methods
+pairs(emm)
+emm_results<-cld(emm, Letters=c(LETTERS)) #letter display
+
+#export to excel file
+x<-emm_results
+writexl::write_xlsx(x, path = "Output/surv_shade_posthoc.xlsx")
+```
+
+### *Survivorship within low shade*  
+
+Analyze with a binomial mixed effect model.    
+Fixed effects: temperature, flow, conditioned, type  
+Random effects: plug number  
+Subset: final timepoint, growth_shade = X2  
+
+`surv_mod<-glmer(outcome ~ temperature * flow * conditioned * type + (1|plug_number), data=surv_AH, family=binomial, subset=c(growth_shade=="X2", timepoint=="148"))`  
+
+Run model and check for overdispersion.  
+```{r, results=TRUE, message=FALSE, warning=FALSE}
+
+#run model in only 2x shade and type as random effect and final timepoint 
+surv_mod<-glmer(outcome ~ temperature * flow * conditioned * type + (1|plug_number), data=surv_AH, family=binomial, subset=c(growth_shade=="X2", timepoint=="148"))
+
+dispersion_glmer(surv_mod) #no evidence of overdispersion
+```
+
+View summary and ANOVA table.  
+
+```{r, results=TRUE}
+summary(surv_mod)
+Anova(surv_mod)
+
+#export to excel
+#coefficients
+x<-summary(surv_mod)$coefficients 
+y<-broom::tidy(x)
+writexl::write_xlsx(as.data.frame(y), path = "Output/surv_model_coefs.xlsx")
+
+#anova
+x<-car::Anova(surv_mod, type=2)
+y<-broom::tidy(x)
+writexl::write_xlsx(as.data.frame(y), path = "Output/surv_model_pvalues.xlsx")
+```
+
+Summarize and display statistics for survival at the final timepoint within X2 shade treatment.   
+```{r, results=TRUE}
+finalsurv<-surv_AH[which(surv_AH$timepoint == "148"),]
+finalsurv2<-finalsurv[which(finalsurv$growth_shade == "X2"),]
+
+surv_summary <- plyr::ddply(finalsurv2, c("temperature", "conditioned", "flow", "type"), summarise,
+                  N    = length(outcome[!is.na(outcome)]),
+                  mean = mean(outcome, na.rm=TRUE),
+                  sd   = sd(outcome, na.rm=TRUE),
+                  se   = sd / sqrt(N), 
+                  max = max(outcome, na.rm=TRUE),
+                  lower = mean-sd, 
+                  upper = mean+sd
+);surv_summary
+
+#export to excel file
+x<-surv_summary
+writexl::write_xlsx(x, path = "Output/surv_descriptive_stats.xlsx")
+```
+
+
+# **4. Bleaching**  
+
+Bleaching is measured as a binary response over the course of the study (0=bleached, 1=nonbleached).  
+
+Analyze with a binomial mixed effects model.  
+Fixed effects: temperature, flow, conditioned, type 
+Random effects: timepoint (days), plug number
+Subsets: growth_shade = X2 (low shade) 
+
+Format bleaching dataset.  
+```{r, results=TRUE}
+#format data
+bleach_AH$temperature<-as.factor(bleach_AH$temperature)
+bleach_AH$conditioned<-as.factor(bleach_AH$conditioned)
+bleach_AH$flow<-as.factor(bleach_AH$flow)
+bleach_AH$growth_shade<-as.factor(bleach_AH$growth_shade)
+bleach_AH$type<-as.factor(bleach_AH$type)
+bleach_AH$plug_number<-as.factor(bleach_AH$plug_number)
+bleach_AH$timepoint<-as.factor(bleach_AH$timepoint)
+```
+
+Analyze model.  
+
+`bleach_mod<-glmer(outcome ~ temperature * flow * conditioned * type + (1|timepoint) + (1|plug_number), data=bleach_AH, family = binomial, subset=c(growth_shade=="X2"))`
+
+Check for overdispersion.  
+```{r, results=TRUE, warning=FALSE, message=FALSE}
+bleach_mod<-glmer(outcome ~ temperature * flow * conditioned * type + (1|timepoint) + (1|plug_number), data=bleach_AH, family = binomial, subset=c(growth_shade=="X2")) #timepoint is number of days
+
+dispersion_glmer(bleach_mod)
+```
+
+View summary and anova table. 
+
+````{r, results=TRUE}
+summary(bleach_mod)
+Anova(bleach_mod)
+
+#export to excel
+#coefficients
+x<-summary(bleach_mod)$coefficients 
+y<-broom::tidy(x)
+writexl::write_xlsx(as.data.frame(y), path = "Output/bleach_model_coefs.xlsx")
+
+#anova
+x<-car::Anova(bleach_mod, type=2)
+y<-broom::tidy(x)
+writexl::write_xlsx(as.data.frame(y), path = "Output/bleach_model_pvalues.xlsx")
+``` 
+
+Generate a table of bleaching at each timepoint.  
+```{r, results=TRUE}
+sumbleach<-bleach_AH[which(bleach_AH$growth_shade == "X2"),]
+
+bleach_summary <- plyr::ddply(sumbleach, c("timepoint", "temperature", "conditioned", "flow", "type"), summarise,
+                  N    = length(outcome[!is.na(outcome)]),
+                  mean = mean(outcome, na.rm=TRUE),
+                  sd   = sd(outcome, na.rm=TRUE),
+                  se   = sd / sqrt(N), 
+                  max = max(outcome, na.rm=TRUE),
+                  lower = mean-sd, 
+                  upper = mean+sd
+);bleach_summary
+
+#export to excel file
+x<-bleach_summary
+writexl::write_xlsx(x, path = "Output/bleach_descriptive_stats.xlsx")
+
+```
+
+
+# **5. Effect Sizes**  
+
+Calculate Cohen's d effect sizes for main effects of juvenile coral responses.  
+
+Calculate effect sizes for growth and set reference levels for controls.  
+
+Controls: 
+Type = Individual
+Flow = No Flow
+Conditioning = Not Conditioned
+Shade = Low Shade
+Temperature = Ambient
+
+Using a Cohen's d Welch test, which does not assume equal variance. Hedge's correction not needed due to large sample size.  
+```{r, results=TRUE}
+library(effsize); library(rstatix)
+growth_AH$type <- relevel(growth_AH$type, ref = "agg")
+growth_AH$flow <- relevel(growth_AH$flow, ref = "Yes")
+growth_AH$conditioned <- relevel(growth_AH$conditioned, ref = "Yes")
+
+cohens_d(percent_growth ~ type, var.equal = FALSE, ref.group="agg", data=growth_AH)
+cohens_d(percent_growth ~ flow, var.equal = FALSE, ref.group="Yes", data=growth_AH)
+cohens_d(percent_growth ~ conditioned, var.equal = FALSE, ref.group="Yes", data=growth_AH)
+
+#subset temperature to remove levels and compare between ambient and cool and ambient and high
+#compare hot vs ambient
+growth_AH$temperature <- relevel(growth_AH$temperature, ref = "Hot")
+growth_AH_h<-growth_AH[!(growth_AH$temperature=="Cold"),] #remove cold
+growth_AH_h$temperature <- factor(growth_AH_h$temperature)
+cohens_d(percent_growth ~ temperature, var.equal = FALSE, ref.group="Hot", data=growth_AH_h)
+
+#compare cold vs ambient
+growth_AH$temperature <- relevel(growth_AH$temperature, ref = "Cold")
+growth_AH_c<-growth_AH[!(growth_AH$temperature=="Hot"),] #remove cold
+growth_AH_c$temperature <- factor(growth_AH_c$temperature)
+cohens_d(percent_growth ~ temperature, var.equal = FALSE, ref.group="Cold", data=growth_AH_c)
+
+```
+
+Calculate effect sizes for survivorship. 
+
+```{r, results=TRUE}
+
+finalsurv$type <- relevel(finalsurv$type, ref = "agg")
+finalsurv$flow <- relevel(finalsurv$flow, ref = "Yes")
+finalsurv$conditioned <- relevel(finalsurv$conditioned, ref = "Yes")
+finalsurv$growth_shade <- relevel(finalsurv$growth_shade, ref = "X4")
+
+cohens_d(outcome ~ type, var.equal = FALSE, ref.group="agg", data=finalsurv)
+cohens_d(outcome ~ flow, var.equal = FALSE, ref.group="Yes", data=finalsurv)
+cohens_d(outcome ~ conditioned, var.equal = FALSE, ref.group="Yes", data=finalsurv)
+
+#subset temperature to remove levels and compare between ambient and cool and ambient and high
+#compare hot vs ambient
+finalsurv$temperature <- relevel(finalsurv$temperature, ref = "Hot")
+finalsurv_h<-finalsurv[!(finalsurv$temperature=="Cold"),] #remove cold
+finalsurv_h$temperature <- factor(finalsurv_h$temperature)
+cohens_d(outcome ~ temperature, var.equal = FALSE, ref.group="Hot", data=finalsurv_h)
+
+#compare cold vs ambient
+finalsurv$temperature <- relevel(finalsurv$temperature, ref = "Cold")
+finalsurv_c<-finalsurv[!(finalsurv$temperature=="Hot"),] #remove cold
+finalsurv_c$temperature <- factor(finalsurv_c$temperature)
+cohens_d(outcome ~ temperature, var.equal = FALSE, ref.group="Cold", data=finalsurv_c)
+```
+
+Calculate effect sizes for bleaching.   
+
+```{r, results=TRUE}
+bleach_AH<-as.data.frame(bleach_AH)
+bleach_AH$type <- relevel(bleach_AH$type, ref = "agg")
+bleach_AH$flow <- relevel(bleach_AH$flow, ref = "Yes")
+bleach_AH$conditioned <- relevel(bleach_AH$conditioned, ref = "Yes")
+bleach_AH$growth_shade <- relevel(bleach_AH$growth_shade, ref = "X4")
+
+cohens_d(outcome ~ type, var.equal = FALSE, ref.group="agg", data=bleach_AH)
+cohens_d(outcome ~ flow, var.equal = FALSE, ref.group="Yes", data=bleach_AH)
+cohens_d(outcome ~ conditioned, var.equal = FALSE, ref.group="Yes", data=bleach_AH)
+cohens_d(outcome ~ growth_shade, var.equal = FALSE, ref.group="X2", data=bleach_AH)
+
+#subset temperature to remove levels and compare between ambient and cool and ambient and high
+#compare hot vs ambient
+bleach_AH$temperature <- relevel(bleach_AH$temperature, ref = "Hot")
+bleach_AH_h<-bleach_AH[!(bleach_AH$temperature=="Cold"),] #remove cold
+bleach_AH_h$temperature <- factor(bleach_AH_h$temperature)
+cohens_d(outcome ~ temperature, var.equal = FALSE, ref.group="Hot", data=bleach_AH_h)
+
+#compare cold vs ambient
+bleach_AH$temperature <- relevel(bleach_AH$temperature, ref = "Cold")
+bleach_AH_c<-bleach_AH[!(bleach_AH$temperature=="Hot"),] #remove cold
+bleach_AH_c$temperature <- factor(bleach_AH_c$temperature)
+cohens_d(outcome ~ temperature, var.equal = FALSE, ref.group="Cold", data=bleach_AH_c)
+```
+
+
+# **Correlation of Growth and Survival**  
+
+To analyze the relationship between growth and survival for individuals and aggregates on each plug.   
+
+```{r, results=TRUE}
+#summarize growth by plug for individuals and aggregates
+growth_trt <- plyr::ddply(growth_AH, c("type", "flow", "conditioned", "temperature"), summarise,
+                  growth = mean(percent_growth, na.rm=TRUE)
+)
+
+#summarize survivorship by plug for individuals and aggregates
+surv_trt <- plyr::ddply(finalsurv, c("type", "flow", "conditioned", "temperature"), summarise,
+                  survival = mean(outcome, na.rm=TRUE)
+)
+
+#create new dataframe and match values to include plug, type, growth, and survival 
+
+reg_data<-merge(growth_trt, surv_trt)
+```
+
+View correlation for individuals and aggregates separately. 
+
+```{r, results=TRUE}
+reg_data_agg<-reg_data%>%filter(type=="agg")
+cor.test(reg_data_agg$survival, reg_data_agg$growth, method=c("spearman"))
+
+reg_data_ind<-reg_data%>%filter(type=="ind")
+cor.test(reg_data_ind$survival, reg_data_ind$growth, method=c("spearman"))
+```
+
+
+
+```{r, results=TRUE, warning=FALSE}
+Reg1<-ggplot(reg_data, aes(x=growth, y=survival)) + 
+  geom_point(aes(color=type), size=3) +
+  geom_smooth(method='lm', aes(color = type), fullrange=TRUE, se=TRUE)+
+   scale_color_manual(name="Type",
+                    values=c("blue", "black"), 
+                    labels=c("Aggregate", "Individual"))+
+  theme_classic()+
+  ylim(0,1)+
+  theme(text = element_text(size = 18))+
+  theme(axis.text = element_text(size = 18, color="black"))+
+  theme(axis.title = element_text(size = 18, face="bold"))+
+  theme(legend.title = element_text(size = 18, face="bold"))+
+  theme(legend.text = element_text(size = 18, color="black"))+
+  ylab(expression(bold(paste("Survival")))) +
+  xlab(expression(bold(paste("Growth Rate")))); Reg1
+
+ggsave("Output/Surv_growth_regression_Figure.pdf", plot=Reg1, height=8, width=10, units = c("in"), dpi=300) #output figure
+
+```
