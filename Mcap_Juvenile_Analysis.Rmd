@@ -34,18 +34,19 @@ In these datasets, columns are as follows:
 Formatting growth.   
 ```{r, results=FALSE, warning=FALSE, message=FALSE}
 
-library(readxl);library(tidyverse);library(janitor)
+library(readxl);library(janitor);library(cowplot);library(plotrix);library(egg);
+library(tidyverse)
 
-growth_AH<-read_xlsx("Data/Growth_03062020.xlsx")%>%clean_names()%>%
-     mutate(type=case_when(str_detect(aggregate_individual, "[A-O]") ~"agg",
-                           TRUE ~ "ind"))%>%
-     rename(growth=growth_mm2)
+growth_AH<-read_xlsx("Data/Growth_Data.xlsx")%>%clean_names()%>%
+     mutate(type=case_when(str_detect(aggregate_individual, "[A-O]") ~"agg", TRUE ~ "ind"))%>%
+     rename(change=growth)%>%
+     mutate(growth=(change/initial_july)*100)
 ```
 
 Formatting survivorship.    
 ```{r, results=FALSE, warning=FALSE, message=FALSE}
 
-raw<-read_xlsx("Data/M.cap_Survivorship_03032020.xlsx")%>%clean_names()
+raw<-read_xlsx("Data/Survivorship_Data.xlsx")%>%clean_names()
 metadata<-raw[,1:5]
 
 initial<-raw%>%select(plug_number,temperature,conditioned,flow,growth_shade,noquote(order(colnames(raw))))%>%
@@ -170,7 +171,7 @@ rm(list = c(toremove, "toremove"))
 
 # **2. Growth**      
 
-## *Growth Rate*  
+## *Growth Rate*   
 
 Growth is calculated as total percent growth (change in growth over course of study normalized to initial size).  
 
@@ -230,7 +231,7 @@ growth_modT<-lmerTest::lmer(scale(growth_transformed)~temperature * conditioned 
 
 #check assumptions
 qqPlot(residuals(growth_modT)) #no longer violated
-leveneTest(residuals(growth_modT)~temperature*conditioned*flow*type, data=growth_AH) #violated, use White correction in anova to account for this
+leveneTest(growth_AH$growth_transformed~temperature*conditioned*flow*type, data=growth_AH) #violated, use White correction in anova to account for this
 ```
 
 Normality is met, but variance is violated. We will use a white correction in ANOVA summary of model to conduct conservative estimates.  
@@ -679,7 +680,7 @@ To analyze the relationship between growth and survival for individuals and aggr
 growth_trt <- plyr::ddply(growth_AH, c("type", "flow", "conditioned", "temperature"), summarise,
                   growth = mean(percent_growth, na.rm=TRUE)
 )
-
+ 
 #summarize survivorship by plug for individuals and aggregates
 surv_trt <- plyr::ddply(finalsurv, c("type", "flow", "conditioned", "temperature"), summarise,
                   survival = mean(outcome, na.rm=TRUE)

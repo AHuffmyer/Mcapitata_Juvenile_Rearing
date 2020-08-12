@@ -1,23 +1,23 @@
 rm(list=ls(all=TRUE)) 
-
-library(readxl);library(tidyverse);library(janitor);library(cowplot);library(plotrix)
+library(readxl);library(tidyverse);library(janitor);library(cowplot);library(plotrix);library(egg)
 ####################### FORMATTING GROWTH  ########################################################### #####
-setwd("./")
-library(readxl);library(tidyverse);library(janitor);library(cowplot)
 
-growth_AH<-read_xlsx("Data/Growth_03062020.xlsx")%>%clean_names()%>%
+setwd("./Data")
+library(readxl);library(janitor);library(cowplot)
+library(tidyverse)
+
+growth_AH<-read_xlsx("Growth_Data.xlsx")%>%clean_names()%>%
      mutate(type=case_when(str_detect(aggregate_individual, "[A-O]") ~"agg",
                            TRUE ~ "ind"))%>%
-     rename(growth=growth_mm2)%>%
      rename(change=growth)%>%
      mutate(growth=(change/initial_july)*100)
 
-saveRDS(growth_AH,"Data/growthdata")
+saveRDS(growth_AH,"growthdata")
 ####################### FORMATTING SURVIVORSHIP ###################################################### #####
-setwd("./")
+setwd("./Data")
 library(readxl);library(tidyverse);library(janitor)
 
-raw<-read_xlsx("Data/M.cap_Survivorship_03032020.xlsx")%>%clean_names()
+raw<-read_xlsx("Survivorship_Data.xlsx")%>%clean_names()
 metadata<-raw[,1:5]
 
 initial<-raw%>%select(plug_number,temperature,conditioned,flow,growth_shade,noquote(order(colnames(raw))))%>%
@@ -80,7 +80,7 @@ surv<-left_join(left_join(counts,initial,by=c("plug_number","type"))%>%
      mutate(nxt=lead(alive,n=1L))%>%
      rowwise()%>%
      mutate(alive=case_when(alive<nxt ~ nxt,TRUE ~as.numeric(alive)))
-saveRDS(surv,"Data/survdata_endpoint")
+saveRDS(surv,"survdata_endpoint")
 
 
 unfold<-function(x,lost_colname,surv_colname){
@@ -90,9 +90,9 @@ unfold<-function(x,lost_colname,surv_colname){
      surv_final<-surv_expanded %>% mutate(outcome=1)
      rbind(lost_final,surv_final)
 }
-dates<-read_tsv("Data/dates.txt")%>%clean_names()%>%select(-date)
+dates<-read_tsv("dates.txt")%>%clean_names()%>%select(-date)
 surv_AH<-left_join(unfold(surv,"dead","alive"),dates,by="timepoint") #dead=0, alive=1
-saveRDS(surv_AH,"Data/survdata_timeseries")
+saveRDS(surv_AH,"./survdata_timeseries")
 
 
 
@@ -142,14 +142,14 @@ bleach<-left_join(bl_counts,metadata,by="plug_number")%>%
 
 
 bleach_AH<-left_join(unfold(bleach,"bleach","nonbleach"),dates,by="timepoint") #bleach=0, nonbleach=1
-saveRDS(bleach_AH,"Data/bleachdata")
+saveRDS(bleach_AH,"./bleachdata")
 
 
 ####################### SHADE DECLINE (F1) ########################################################### #####
 setwd("./")
 library(tidyverse);library(cowplot);library(plotrix)
 
-raw<-readRDS("Data/survdata_timeseries")
+raw<-readRDS("survdata_timeseries")
 raw$growth_shade <- factor(raw$growth_shade,levels = c("X2","X4"),labels=c("High","Low"))
 quartz(w=(81/25.4),h=2)
 ggplot(raw)+
@@ -163,7 +163,7 @@ ggplot(raw)+
 ####################### SURVIVORSHIP MAIN EFFECTS (F2) ############################################### #####
 library(tidyverse);library(cowplot);library(egg)
 setwd("./")
-raw<-readRDS("Data/survdata_endpoint")
+raw<-readRDS("survdata_endpoint")
 
 data<-raw%>%filter(growth_shade=="X2")%>%filter(timepoint==10)%>%select(-nxt)%>%
      mutate(surv=alive/(alive+dead))%>%filter(surv!="NaN")
@@ -281,7 +281,7 @@ tag_facet(a,
 ####################### BLEACHING EFFECTS (F4) ####################################################### #####
 setwd("./")
 library(plotly)
-data<-readRDS("Data/bleachdata")%>%filter(growth_shade=="X2")%>%
+data<-readRDS("./bleachdata")%>%filter(growth_shade=="X2")%>%
      mutate(outcome=case_when((timepoint==1|timepoint==2)~1,TRUE ~as.numeric(outcome)))%>%
      mutate(outcome=case_when(outcome==1 ~0,
                               outcome==0 ~1))
@@ -361,7 +361,7 @@ plot_grid(a,b,c,d,nrow=1,rel_widths=c(1.3,1,1.3,1),labels=c("A","B","C","D"),lab
 
 ####################### GROWTH EFFECTS (F5,F6) ####################################################### #####
 setwd("./")
-data<-readRDS("Data/growthdata")
+data<-readRDS("./growthdata")
 data$temperature <- factor(data$temperature,levels = c("Cold","Ambient","Hot"))
 data$type <- factor(data$type,levels = c("agg","ind"),labels=c("Aggregate","Individual"))
 data$flow <- factor(data$flow,levels = c("Yes","No"),labels=c("High","Low"))
@@ -424,13 +424,13 @@ plot_grid(b,c,nrow=1,labels=c("A","B"),label_size=8,label_x=c(0.2,0.05),align="h
 ####################### CORRELATION (SF5) ############################################################ #####
 library(tidyverse);library(egg)
 setwd("./")
-growth<-readRDS("Data/growthdata")
+growth<-readRDS("./growthdata")
 growth$temperature <- factor(growth$temperature,levels = c("Cold","Ambient","Hot"))
 growth$type <- factor(growth$type,levels = c("agg","ind"),labels=c("Aggregate","Individual"))
 growth$flow <- factor(growth$flow,levels = c("Yes","No"),labels=c("High","None"))
 growth_out<-growth%>%group_by(temperature,flow,conditioned,type)%>%summarise(growth=mean(growth))%>%select(growth)
 
-surv<-readRDS("Data/survdata_endpoint")%>%filter(growth_shade=="X2")%>%filter(timepoint==10)%>%select(-nxt)%>%
+surv<-readRDS("./survdata_endpoint")%>%filter(growth_shade=="X2")%>%filter(timepoint==10)%>%select(-nxt)%>%
      mutate(surv=alive/(alive+dead))%>%filter(surv!="NaN")
 surv$temperature <- factor(surv$temperature,levels = c("Cold","Ambient","Hot"))
 surv$type <- factor(surv$type,levels = c("agg","ind"),labels=c("Aggregate","Individual"))
@@ -473,7 +473,7 @@ tag_facet(a, x = -Inf, y = -Inf,
 #determines best treatment combinations for different metrics
 library(tidyverse);library(cowplot);library(egg);library(plotrix)
 setwd("./")
-raw<-readRDS("Data/survdata_endpoint")
+raw<-readRDS("survdata_endpoint")
 
 #calculate treatment with highest average survivorship
 data<-raw%>%filter(growth_shade=="X2")%>%filter(timepoint==10)%>%select(-nxt)%>%
@@ -481,15 +481,15 @@ data<-raw%>%filter(growth_shade=="X2")%>%filter(timepoint==10)%>%select(-nxt)%>%
      summarise(mean=mean(surv))
 
 #calculate treatment with highest average growth
-data<-readRDS("Data/growthdata")%>%group_by(temperature,conditioned,flow)%>%
+data<-readRDS("./growthdata")%>%group_by(temperature,conditioned,flow)%>%
      summarise(mean=mean(change))
 
 #mean and se of growth overall
-readRDS("Data/growthdata")%>%summarise(mean=mean(growth),se=std.error(growth))
+readRDS("./growthdata")%>%summarise(mean=mean(growth),se=std.error(growth))
 
 ####################### CONICALS (SF2) ############################################################### #####
 #data for larval conical temperatures
-setwd("Data/tempdata")
+setwd("./tempdata")
 library(readxl);library(tidyverse);library(lubridate);library(scales);library(plotrix)
 hot<-read_excel("conicals.xlsx",sheet="Hot");str(data)
 ambient<-read_excel("conicals.xlsx",sheet="Ambient");str(ambient)
@@ -516,7 +516,7 @@ data%>%group_by(Treatment)%>%summarise(mean=mean(Temp),se=std.error(Temp))
 
 
 ####################### TEMP (SF 3) ################################################################## #####
-setwd("Data/tempdata")
+setwd("./tempdata")
 library(readxl);library(tidyverse);library(lubridate);library(scales);library(plotrix)
 a<-read_xlsx("1_2x_Flow.xlsx");b<-read_xlsx("2_HOBO.xlsx",sheet="2x_Flow"); as.numeric(b$Light)->b$Light;c<-read_xlsx("3_2x_Flow.xlsx");F2<-bind_rows(a,b,c)%>%rename(F2_Temp=Temp,F2_Light=Light)%>%mutate(F2_Temp=F2_Temp+0.004)
 a<-read_xlsx("1_4x_Flow.xlsx");b<-read_xlsx("2_HOBO.xlsx",sheet="4x_Flow"); as.numeric(b$Light)->b$Light;c<-read_xlsx("3_4x_Flow.xlsx");F4<-bind_rows(a,b,c)%>%rename(F4_Temp=Temp,F4_Light=Light)%>%mutate(F4_Temp=F4_Temp-0.021)
@@ -595,7 +595,7 @@ full_join(field,temp,by="Date")%>%select(Date,everything())%>%
      gather(tank,temp,-Date)%>%group_by(tank)%>%summarise(mean=mean(temp,na.rm=TRUE),se=std.error(temp))
      
 ####################### LIGHT (SF4) ################################################################## #####
-setwd("Data/lightdata")
+setwd("./lightdata")
 library(tidyverse);library(readxl);library(lubridate);library(cowplot)
 
 n2<-read_excel("2x_No_Flow.xlsx",skip=1)%>%select(-'#',-5)%>%rename("Date"=1,"Temp"=2,"n2"=3)%>%

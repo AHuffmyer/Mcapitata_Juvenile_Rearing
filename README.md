@@ -1,7 +1,7 @@
 
 **Study:** Coral husbandry for ocean futures: leveraging abiotic factors to increase survivorship, growth and resilience in juvenile *Montipora capitata* 
 
-**Authors:** Hancock J, A Barrows, T Roome, A Huffmyer, S Matsuda, N Munk, S Rahnke, C Drury
+**Authors:** Hancock J, A Barrows, T Roome, AS Huffmyer, S Matsuda, N Munk, S Rahnke, C Drury
 
 **Directories:**  
 
