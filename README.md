@@ -1,3 +1,4 @@
+[![DOI](https://zenodo.org/badge/254249668.svg)](https://zenodo.org/badge/latestdoi/254249668)
 
 **Study:** Coral husbandry for ocean futures: leveraging abiotic factors to increase survivorship, growth and resilience in juvenile *Montipora capitata* 
 
